@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tourist Spot Finder PH - Phone Preview</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #101826;
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+
+    .stage {
+      width: 430px;
+      height: 860px;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 18% 16%, rgba(255, 210, 75, .22), transparent 28%),
+        radial-gradient(circle at 82% 20%, rgba(20, 184, 166, .28), transparent 30%),
+        linear-gradient(145deg, #132538, #0f241f 54%, #1b2d44);
+    }
+
+    .phone {
+      width: 360px;
+      height: 780px;
+      border: 10px solid #0d1117;
+      border-radius: 44px;
+      overflow: hidden;
+      box-shadow: 0 28px 70px rgba(0, 0, 0, .45);
+      position: relative;
+      background: #102033;
+    }
+
+    .app {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(7, 18, 28, .30), rgba(7, 18, 28, .62)),
+        linear-gradient(135deg, #1a6e89, #154531 52%, #223e68);
+    }
+
+    .map {
+      position: absolute;
+      inset: 78px 18px auto auto;
+      width: 230px;
+      height: 420px;
+      opacity: .24;
+      filter: drop-shadow(0 18px 34px rgba(0, 0, 0, .30));
+    }
+
+    .island {
+      position: absolute;
+      border-radius: 48% 52% 44% 56%;
+      background: linear-gradient(145deg, rgba(255, 255, 255, .94), rgba(99, 224, 191, .65));
+    }
+
+    .i1 { width: 76px; height: 128px; top: 12px; left: 78px; transform: rotate(-18deg); }
+    .i2 { width: 58px; height: 86px; top: 160px; left: 110px; transform: rotate(12deg); }
+    .i3 { width: 66px; height: 116px; top: 266px; left: 116px; transform: rotate(-10deg); }
+    .dot { width: 16px; height: 20px; border-radius: 50%; }
+    .d1 { top: 126px; left: 56px; }
+    .d2 { top: 220px; left: 80px; }
+    .d3 { top: 250px; left: 168px; }
+
+    .topbar {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 26px 20px 14px;
+      background: rgba(255, 255, 255, .11);
+      backdrop-filter: blur(18px);
+      border-bottom: 1px solid rgba(255, 255, 255, .14);
+    }
+
+    .brand {
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, .18);
+    }
+
+    .content {
+      position: relative;
+      padding: 22px;
+    }
+
+    h1 {
+      margin: 22px 0 10px;
+      font-size: 37px;
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: rgba(255, 255, 255, .82);
+      line-height: 1.35;
+    }
+
+    .button {
+      margin-top: 20px;
+      width: max-content;
+      padding: 13px 18px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, #14b8a6, #2f80ed);
+      font-weight: 700;
+      box-shadow: 0 14px 28px rgba(20, 184, 166, .28);
+    }
+
+    .panel {
+      margin-top: 32px;
+      padding: 18px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, .14);
+      border: 1px solid rgba(255, 255, 255, .18);
+      backdrop-filter: blur(18px);
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    .spots {
+      display: grid;
+      gap: 12px;
+    }
+
+    .spot {
+      min-height: 78px;
+      border-radius: 18px;
+      padding: 14px;
+      background: rgba(255, 255, 255, .12);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .pin {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 214, 10, .18);
+      font-size: 21px;
+    }
+
+    .spot strong {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 15px;
+    }
+
+    .spot span {
+      color: rgba(255, 255, 255, .72);
+      font-size: 13px;
+    }
+
+    .nav {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      bottom: 18px;
+      height: 64px;
+      border-radius: 24px;
+      background: rgba(7, 18, 28, .56);
+      border: 1px solid rgba(255, 255, 255, .14);
+      backdrop-filter: blur(18px);
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      align-items: center;
+      text-align: center;
+      color: rgba(255, 255, 255, .70);
+      font-size: 12px;
+    }
+
+    .active {
+      color: #5eead4;
+      font-weight: 800;
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="phone">
+      <div class="app">
+        <div class="map">
+          <div class="island i1"></div>
+          <div class="island i2"></div>
+          <div class="island i3"></div>
+          <div class="island dot d1"></div>
+          <div class="island dot d2"></div>
+          <div class="island dot d3"></div>
+        </div>
+        <header class="topbar">
+          <div class="brand">🇵🇭 Tourist Spot Finder</div>
+          <div class="avatar">⌕</div>
+        </header>
+        <div class="content">
+          <h1>Explore the Philippines</h1>
+          <p>Find beaches, mountains, food stops, and community travel tips in one smooth place.</p>
+          <div class="button">Start Exploring</div>
+          <section class="panel">
+            <h2>Popular Nearby</h2>
+            <div class="spots">
+              <div class="spot">
+                <div class="pin">🏝️</div>
+                <div><strong>El Nido, Palawan</strong><span>Crystal lagoons and island hopping</span></div>
+              </div>
+              <div class="spot">
+                <div class="pin">🌋</div>
+                <div><strong>Mayon Volcano</strong><span>Scenic trails and perfect cone views</span></div>
+              </div>
+              <div class="spot">
+                <div class="pin">🏞️</div>
+                <div><strong>Chocolate Hills</strong><span>Iconic Bohol landscape</span></div>
+              </div>
+            </div>
+          </section>
+        </div>
+        <nav class="nav">
+          <div class="active">Home</div>
+          <div>Map</div>
+          <div>Community</div>
+          <div>Profile</div>
+        </nav>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
