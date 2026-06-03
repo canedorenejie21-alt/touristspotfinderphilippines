@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: tourist-spot-finder-api
+    env: python
+    rootDir: BACKEND
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_SECRET_KEY
+        generateValue: true
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: OTP_EXPIRY_MINUTES
+        value: "10"
+      - key: ADMIN_EMAILS
+        sync: false
