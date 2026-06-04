@@ -48,3 +48,10 @@ app.*.map.json
 BACKEND/.env
 BACKEND/.venv/
 BACKEND/*.db
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
