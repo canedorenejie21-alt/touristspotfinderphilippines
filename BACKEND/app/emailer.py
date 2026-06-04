@@ -1,5 +1,5 @@
-from email.message import EmailMessage
 import smtplib
+from email.message import EmailMessage
 
 from .config import get_settings
 
@@ -43,7 +43,10 @@ def send_code_email(to_email: str, subject: str, intro: str, code: str) -> None:
         )
     )
 
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as server:
-        server.starttls()
-        server.login(settings.smtp_username, settings.smtp_password)
-        server.send_message(message)
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as server:
+            server.starttls()
+            server.login(settings.smtp_username, settings.smtp_password)
+            server.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise RuntimeError("SMTP failed to send email") from exc

@@ -61,6 +61,7 @@ from .verification import (
 )
 
 settings = get_settings()
+EMAIL_DELIVERY_ERROR = "Email sending failed. Check SMTP variables in the backend host."
 
 app = FastAPI(title="Tourist Spot Finder PH API", version="1.0.0")
 app.add_middleware(
@@ -160,7 +161,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> RegisterResp
     except RuntimeError as exc:
         raise HTTPException(
             status_code=503,
-            detail="Email sending is not configured. Add SMTP settings in BACKEND/.env.",
+            detail=EMAIL_DELIVERY_ERROR,
         ) from exc
     return RegisterResponse(
         message="Verification code sent to your email",
@@ -183,7 +184,7 @@ def resend_verification(
     except RuntimeError as exc:
         raise HTTPException(
             status_code=503,
-            detail="Email sending is not configured. Add SMTP settings in BACKEND/.env.",
+            detail=EMAIL_DELIVERY_ERROR,
         ) from exc
     return RegisterResponse(
         message="Verification code sent to your email",
@@ -239,7 +240,7 @@ def forgot_password(payload: ForgotPasswordIn, db: Session = Depends(get_db)) ->
         except RuntimeError as exc:
             raise HTTPException(
                 status_code=503,
-                detail="Email sending is not configured. Add SMTP settings in BACKEND/.env.",
+                detail=EMAIL_DELIVERY_ERROR,
             ) from exc
     return {"message": "If the email exists, a reset code has been sent"}
 
