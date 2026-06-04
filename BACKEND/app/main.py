@@ -1,4 +1,9 @@
 from datetime import datetime
+import json
+from secrets import token_urlsafe
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +36,7 @@ from .schemas import (
     CommentCreate,
     CommentOut,
     ForgotPasswordIn,
+    GoogleSignInIn,
     ItineraryCreate,
     ItineraryOut,
     PhotoCreate,
@@ -62,6 +68,7 @@ from .verification import (
 
 settings = get_settings()
 EMAIL_DELIVERY_ERROR = "Email sending failed. Check SMTP variables in the backend host."
+GOOGLE_AUTH_ERROR = "Google Sign-In failed. Check Google Client ID setup."
 
 app = FastAPI(title="Tourist Spot Finder PH API", version="1.0.0")
 app.add_middleware(
@@ -239,6 +246,52 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> AuthResponse:
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Please verify your email before logging in")
     return AuthResponse(token=create_token(user.id), user=UserOut.model_validate(user))
+
+
+@app.post("/auth/google", response_model=AuthResponse)
+def google_login(payload: GoogleSignInIn, db: Session = Depends(get_db)) -> AuthResponse:
+    profile = verify_google_id_token(payload.id_token)
+    email = profile["email"].lower()
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if not user:
+        user = User(
+            full_name=profile["name"],
+            email=email,
+            password_hash=hash_password(token_urlsafe(32)),
+            is_verified=True,
+            is_admin=email in settings.admin_emails,
+        )
+        db.add(user)
+    else:
+        user.full_name = profile["name"] or user.full_name
+        user.is_verified = True
+        user.is_admin = user.is_admin or email in settings.admin_emails
+    db.commit()
+    db.refresh(user)
+    return AuthResponse(token=create_token(user.id), user=UserOut.model_validate(user))
+
+
+def verify_google_id_token(id_token: str) -> dict[str, str]:
+    if not settings.google_client_id:
+        raise HTTPException(status_code=503, detail=GOOGLE_AUTH_ERROR)
+    url = "https://oauth2.googleapis.com/tokeninfo?" + urlencode({"id_token": id_token})
+    try:
+        with urlopen(url, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid Google sign-in token") from exc
+
+    if data.get("aud") != settings.google_client_id:
+        raise HTTPException(status_code=401, detail=GOOGLE_AUTH_ERROR)
+    if data.get("email_verified") not in ("true", True):
+        raise HTTPException(status_code=401, detail="Google email is not verified")
+    email = data.get("email", "")
+    if not email:
+        raise HTTPException(status_code=401, detail="Google account has no email")
+    return {
+        "email": email,
+        "name": data.get("name") or email.split("@")[0],
+    }
 
 
 @app.post("/auth/forgot-password")

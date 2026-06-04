@@ -1,14 +1,19 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import 'google_web_button.dart';
 
 void main() {
   runApp(const TouristSpotFinderApp());
@@ -19,6 +24,7 @@ class ApiConfig {
     'API_BASE_URL',
     defaultValue: 'http://127.0.0.1:8001',
   );
+  static const googleClientId = String.fromEnvironment('GOOGLE_CLIENT_ID');
 }
 
 class AppUser {
@@ -255,6 +261,15 @@ class ApiClient {
       _uri('/auth/login'),
       headers: _headers,
       body: jsonEncode({'email': email, 'password': password}),
+    );
+    return _readAuthResponse(response);
+  }
+
+  Future<AppUser> loginWithGoogle(String idToken) async {
+    final response = await _client.post(
+      _uri('/auth/google'),
+      headers: _headers,
+      body: jsonEncode({'id_token': idToken}),
     );
     return _readAuthResponse(response);
   }
@@ -1146,14 +1161,108 @@ class _AuthScreenState extends State<AuthScreen> {
   String? errorText;
   String? successText;
   bool isSubmitting = false;
+  StreamSubscription<GoogleSignInAuthenticationEvent>? googleAuthSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_initializeGoogleSignIn());
+  }
+
+  Future<void> _initializeGoogleSignIn() async {
+    if (ApiConfig.googleClientId.isEmpty) return;
+    try {
+      await GoogleSignIn.instance.initialize(
+        clientId: ApiConfig.googleClientId,
+        serverClientId: ApiConfig.googleClientId,
+      );
+      googleAuthSubscription =
+          GoogleSignIn.instance.authenticationEvents.listen(
+            _handleGoogleAuthEvent,
+          )..onError(_handleGoogleAuthError);
+    } catch (_) {
+      if (mounted) {
+        setState(() => errorText = 'Google Sign-In is not configured yet.');
+      }
+    }
+  }
 
   @override
   void dispose() {
+    googleAuthSubscription?.cancel();
     nameController.dispose();
     emailController.dispose();
     passwordController.dispose();
     otpController.dispose();
     super.dispose();
+  }
+
+  Future<void> signInWithGoogle() async {
+    if (ApiConfig.googleClientId.isEmpty) {
+      setState(
+        () => errorText = 'Add GOOGLE_CLIENT_ID before using Google Sign-In.',
+      );
+      return;
+    }
+    setState(() {
+      isSubmitting = true;
+      errorText = null;
+      successText = null;
+    });
+    try {
+      if (GoogleSignIn.instance.supportsAuthenticate()) {
+        final account = await GoogleSignIn.instance.authenticate();
+        await _finishGoogleLogin(account);
+      } else if (!kIsWeb) {
+        setState(
+          () =>
+              errorText = 'Google Sign-In is not available on this device yet.',
+        );
+      }
+    } on GoogleSignInException catch (error) {
+      setState(() {
+        errorText = error.code == GoogleSignInExceptionCode.canceled
+            ? 'Google Sign-In was cancelled.'
+            : 'Google Sign-In failed.';
+      });
+    } catch (_) {
+      setState(() => errorText = 'Google Sign-In failed.');
+    } finally {
+      if (mounted) setState(() => isSubmitting = false);
+    }
+  }
+
+  Future<void> _handleGoogleAuthEvent(
+    GoogleSignInAuthenticationEvent event,
+  ) async {
+    if (event is GoogleSignInAuthenticationEventSignIn) {
+      await _finishGoogleLogin(event.user);
+    }
+  }
+
+  void _handleGoogleAuthError(Object error) {
+    if (mounted) {
+      setState(() {
+        isSubmitting = false;
+        errorText = 'Google Sign-In failed.';
+      });
+    }
+  }
+
+  Future<void> _finishGoogleLogin(GoogleSignInAccount account) async {
+    final idToken = account.authentication.idToken;
+    if (idToken == null || idToken.isEmpty) {
+      setState(() => errorText = 'Google did not return a sign-in token.');
+      return;
+    }
+    try {
+      final signedInUser = await widget.api.loginWithGoogle(idToken);
+      await widget.onAuthenticated(signedInUser);
+    } on ApiException catch (error) {
+      setState(() => errorText = error.message);
+    } catch (_) {
+      setState(() => errorText = 'Cannot connect to the backend.');
+    }
   }
 
   Future<void> submit() async {
@@ -1491,6 +1600,70 @@ class _AuthScreenState extends State<AuthScreen> {
                                     ? resetPassword
                                     : submit,
                               ),
+                              if (!isVerifying && !isResetting) ...[
+                                const SizedBox(height: 14),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Divider(
+                                        color: Colors.white.withValues(
+                                          alpha: .28,
+                                        ),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
+                                      child: Text(
+                                        'or',
+                                        style: TextStyle(
+                                          color: Colors.white.withValues(
+                                            alpha: .76,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Divider(
+                                        color: Colors.white.withValues(
+                                          alpha: .28,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                                if (kIsWeb &&
+                                    !GoogleSignIn.instance
+                                        .supportsAuthenticate())
+                                  Center(child: renderGoogleWebButton())
+                                else
+                                  OutlinedButton.icon(
+                                    onPressed: isSubmitting
+                                        ? null
+                                        : signInWithGoogle,
+                                    icon: const Icon(
+                                      Icons.g_mobiledata,
+                                      size: 28,
+                                    ),
+                                    label: const Text('Continue with Google'),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.white,
+                                      side: BorderSide(
+                                        color: Colors.white.withValues(
+                                          alpha: .38,
+                                        ),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 14,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                               const SizedBox(height: 14),
                               if (isVerifying)
                                 TextButton(

@@ -59,6 +59,10 @@ class ResetPasswordIn(BaseModel):
     new_password: str = Field(min_length=6, max_length=128)
 
 
+class GoogleSignInIn(BaseModel):
+    id_token: str = Field(min_length=20)
+
+
 class SpotOut(BaseModel):
     id: int
     name: str

@@ -51,6 +51,16 @@ class FakeApiClient extends ApiClient {
   Future<void> resendVerification({required String email}) async {}
 
   @override
+  Future<AppUser> loginWithGoogle(String idToken) async {
+    return AppUser(
+      id: 2,
+      fullName: 'Google Traveler',
+      email: 'google@example.com',
+      isAdmin: false,
+    );
+  }
+
+  @override
   Future<List<TouristSpot>> fetchSpots({
     String q = '',
     String category = '',
@@ -91,15 +101,13 @@ void main() {
     final email =
         'logincheck${DateTime.now().microsecondsSinceEpoch}@example.com';
 
+    await tester.ensureVisible(find.text('No account yet? Register'));
     await tester.tap(find.text('No account yet? Register'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).at(0), 'Login Check');
     await tester.enterText(find.byType(TextField).at(1), email);
     await tester.enterText(find.byType(TextField).at(2), 'password123');
     await tester.tap(find.text('Register').last);
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).at(1), '123456');
-    await tester.tap(find.text('Verify OTP'));
     await tester.pumpAndSettle();
 
     expect(find.text('Explore The Philippines'), findsOneWidget);
@@ -133,15 +141,13 @@ void main() {
     final email =
         'community${DateTime.now().microsecondsSinceEpoch}@example.com';
 
+    await tester.ensureVisible(find.text('No account yet? Register'));
     await tester.tap(find.text('No account yet? Register'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).at(0), 'Renejay Explorer');
     await tester.enterText(find.byType(TextField).at(1), email);
     await tester.enterText(find.byType(TextField).at(2), 'password123');
     await tester.tap(find.text('Register').last);
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).at(1), '123456');
-    await tester.tap(find.text('Verify OTP'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Community'));
