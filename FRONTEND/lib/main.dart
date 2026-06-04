@@ -226,7 +226,7 @@ class ApiClient {
     };
   }
 
-  Future<void> register({
+  Future<bool> register({
     required String fullName,
     required String email,
     required String password,
@@ -243,6 +243,8 @@ class ApiClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException(_readError(response), response.statusCode);
     }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return decoded['requires_verification'] as bool? ?? true;
   }
 
   Future<AppUser> login({
@@ -1178,12 +1180,20 @@ class _AuthScreenState extends State<AuthScreen> {
 
     try {
       if (isRegistering) {
-        await widget.api.register(
+        final requiresVerification = await widget.api.register(
           fullName: name,
           email: email,
           password: password,
         );
         if (!mounted) return;
+        if (!requiresVerification) {
+          final signedInUser = await widget.api.login(
+            email: email,
+            password: password,
+          );
+          await widget.onAuthenticated(signedInUser);
+          return;
+        }
         setState(() {
           isRegistering = false;
           isVerifying = true;

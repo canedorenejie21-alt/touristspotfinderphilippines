@@ -21,6 +21,12 @@ class Settings:
         self.smtp_password = getenv("SMTP_PASSWORD", "")
         self.smtp_from_email = getenv("SMTP_FROM_EMAIL", self.smtp_username)
         self.otp_expiry_minutes = int(getenv("OTP_EXPIRY_MINUTES", "10"))
+        self.require_email_verification = getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self.admin_key = getenv("ADMIN_KEY", "tourist-admin-123")
         admin_emails = getenv("ADMIN_EMAILS", "")
         self.admin_emails = {

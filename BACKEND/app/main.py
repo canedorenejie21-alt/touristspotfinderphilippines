@@ -150,22 +150,28 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> RegisterResp
         full_name=payload.full_name.strip(),
         email=payload.email.lower(),
         password_hash=hash_password(payload.password),
-        is_verified=False,
+        is_verified=not settings.require_email_verification,
         is_admin=payload.email.lower() in settings.admin_emails,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    try:
-        create_and_send_verification_code(db, user)
-    except RuntimeError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=EMAIL_DELIVERY_ERROR,
-        ) from exc
+    if settings.require_email_verification:
+        try:
+            create_and_send_verification_code(db, user)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=EMAIL_DELIVERY_ERROR,
+            ) from exc
     return RegisterResponse(
-        message="Verification code sent to your email",
+        message=(
+            "Verification code sent to your email"
+            if settings.require_email_verification
+            else "Account created successfully"
+        ),
         email=user.email,
+        requires_verification=settings.require_email_verification,
     )
 
 
@@ -226,6 +232,10 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> AuthResponse:
     user = db.query(User).filter(func.lower(User.email) == payload.email.lower()).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not settings.require_email_verification and not user.is_verified:
+        user.is_verified = True
+        db.commit()
+        db.refresh(user)
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Please verify your email before logging in")
     return AuthResponse(token=create_token(user.id), user=UserOut.model_validate(user))

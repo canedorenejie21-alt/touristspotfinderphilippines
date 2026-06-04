@@ -25,12 +25,13 @@ class FakeApiClient extends ApiClient {
   }
 
   @override
-  Future<void> register({
+  Future<bool> register({
     required String fullName,
     required String email,
     required String password,
   }) async {
     registeredName = fullName;
+    return false;
   }
 
   @override
