@@ -114,7 +114,7 @@ class ReviewOut(BaseModel):
 
 
 class PhotoCreate(BaseModel):
-    image_url: str = Field(min_length=5, max_length=20000)
+    image_url: str = Field(min_length=5, max_length=2_500_000)
     caption: str = Field(default="", max_length=220)
 
 

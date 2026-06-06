@@ -206,15 +206,34 @@ class TravelBadge {
 }
 
 class PostComment {
-  const PostComment({required this.body, required this.authorName});
+  const PostComment({
+    required this.body,
+    required this.authorName,
+    this.createdAt,
+  });
 
   final String body;
   final String authorName;
+  final DateTime? createdAt;
 
   factory PostComment.fromJson(Map<String, dynamic> json) => PostComment(
     body: json['body'] as String? ?? '',
     authorName: json['author_name'] as String? ?? 'Traveler',
+    createdAt: parseDateTime(json['created_at']),
   );
+}
+
+DateTime? parseDateTime(Object? value) {
+  if (value is! String || value.isEmpty) return null;
+  return DateTime.tryParse(value)?.toLocal();
+}
+
+String formatDateTime(DateTime? value) {
+  if (value == null) return 'Just now';
+  final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
+  final minute = value.minute.toString().padLeft(2, '0');
+  final period = value.hour >= 12 ? 'PM' : 'AM';
+  return '${value.month}/${value.day}/${value.year} $hour:$minute $period';
 }
 
 class ApiClient {
@@ -811,11 +830,15 @@ class AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<AuthGate> {
   late final api = widget.api;
+  static const communityTabIndex = 3;
   bool isLoggedIn = false;
   AppUser? user;
   List<TouristSpot> spots = fallbackSpots;
   List<TravelPost> posts = fallbackPosts;
   String? apiStatus;
+  Timer? communityRefreshTimer;
+  bool isCommunityVisible = false;
+  bool isRefreshingPosts = false;
 
   Future<void> completeAuth(AppUser signedInUser) async {
     setState(() {
@@ -824,6 +847,12 @@ class _AuthGateState extends State<AuthGate> {
       apiStatus = null;
     });
     await loadRemoteData();
+  }
+
+  @override
+  void dispose() {
+    communityRefreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> loadRemoteData() async {
@@ -846,7 +875,9 @@ class _AuthGateState extends State<AuthGate> {
   Future<TravelPost> addPost(String body) async {
     try {
       final post = await api.createPost(body);
-      setState(() => posts = [post, ...posts]);
+      setState(
+        () => posts = [post, ...posts.where((item) => item.id != post.id)],
+      );
       return post;
     } catch (_) {
       final post = TravelPost(
@@ -857,6 +888,37 @@ class _AuthGateState extends State<AuthGate> {
       setState(() => posts = [post, ...posts]);
       return post;
     }
+  }
+
+  Future<void> refreshPosts() async {
+    if (isRefreshingPosts) return;
+    isRefreshingPosts = true;
+    try {
+      final nextPosts = await api.fetchPosts();
+      if (!mounted) return;
+      setState(() => posts = nextPosts);
+    } catch (_) {
+      // Keep the current list visible if the backend is temporarily unavailable.
+    } finally {
+      isRefreshingPosts = false;
+    }
+  }
+
+  void handleTabChanged(int index) {
+    final nextIsCommunityVisible = index == communityTabIndex;
+    if (isCommunityVisible == nextIsCommunityVisible &&
+        communityRefreshTimer != null) {
+      return;
+    }
+    isCommunityVisible = nextIsCommunityVisible;
+    communityRefreshTimer?.cancel();
+    communityRefreshTimer = null;
+    if (!isCommunityVisible) return;
+    unawaited(refreshPosts());
+    communityRefreshTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => unawaited(refreshPosts()),
+    );
   }
 
   Future<AppUser> updateUserName(String fullName) async {
@@ -879,6 +941,9 @@ class _AuthGateState extends State<AuthGate> {
 
   void logout() {
     api.token = null;
+    communityRefreshTimer?.cancel();
+    communityRefreshTimer = null;
+    isCommunityVisible = false;
     setState(() {
       isLoggedIn = false;
       user = null;
@@ -899,6 +964,7 @@ class _AuthGateState extends State<AuthGate> {
         onRefreshSpots: refreshSpots,
         onSpotCreated: addSpot,
         onUpdateName: updateUserName,
+        onTabChanged: handleTabChanged,
       );
     }
 
@@ -917,6 +983,7 @@ class AppShell extends StatefulWidget {
     required this.onRefreshSpots,
     required this.onSpotCreated,
     required this.onUpdateName,
+    required this.onTabChanged,
     this.apiStatus,
     super.key,
   });
@@ -930,6 +997,7 @@ class AppShell extends StatefulWidget {
   final Future<void> Function({String q, String category}) onRefreshSpots;
   final Future<void> Function(TouristSpot spot) onSpotCreated;
   final Future<AppUser> Function(String fullName) onUpdateName;
+  final void Function(int index) onTabChanged;
   final String? apiStatus;
 
   @override
@@ -938,6 +1006,18 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int selectedIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.onTabChanged(selectedIndex);
+  }
+
+  @override
+  void didUpdateWidget(AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    widget.onTabChanged(selectedIndex);
+  }
 
   List<String> get navItems => [
     'Home',
@@ -987,7 +1067,10 @@ class _AppShellState extends State<AppShell> {
                 GlassNavbar(
                   selectedIndex: selectedIndex,
                   items: navItems,
-                  onSelected: (index) => setState(() => selectedIndex = index),
+                  onSelected: (index) {
+                    setState(() => selectedIndex = index);
+                    widget.onTabChanged(index);
+                  },
                   onLogout: widget.onLogout,
                 ),
                 Expanded(
@@ -1161,6 +1244,7 @@ class _AuthScreenState extends State<AuthScreen> {
   String? errorText;
   String? successText;
   bool isSubmitting = false;
+  bool showPassword = false;
   StreamSubscription<GoogleSignInAuthenticationEvent>? googleAuthSubscription;
 
   @override
@@ -1468,6 +1552,7 @@ class _AuthScreenState extends State<AuthScreen> {
       isRegistering = !isRegistering;
       isVerifying = false;
       isResetting = false;
+      showPassword = false;
       errorText = null;
       successText = null;
       otpController.clear();
@@ -1562,7 +1647,22 @@ class _AuthScreenState extends State<AuthScreen> {
                                       ? 'New password'
                                       : 'Password',
                                   icon: Icons.lock_outline,
-                                  obscureText: true,
+                                  obscureText: !showPassword,
+                                  suffixIcon: IconButton(
+                                    tooltip: showPassword
+                                        ? 'Hide password'
+                                        : 'Show password',
+                                    onPressed: () {
+                                      setState(
+                                        () => showPassword = !showPassword,
+                                      );
+                                    },
+                                    icon: Icon(
+                                      showPassword
+                                          ? Icons.visibility_off_outlined
+                                          : Icons.visibility_outlined,
+                                    ),
+                                  ),
                                 ),
                               ],
                               if (successText != null) ...[
@@ -1718,6 +1818,10 @@ class AuthTextField extends StatelessWidget {
     required this.hintText,
     required this.icon,
     this.obscureText = false,
+    this.suffixIcon,
+    this.textInputAction,
+    this.onSubmitted,
+    this.onChanged,
     super.key,
   });
 
@@ -1725,16 +1829,24 @@ class AuthTextField extends StatelessWidget {
   final String hintText;
   final IconData icon;
   final bool obscureText;
+  final Widget? suffixIcon;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
       obscureText: obscureText,
+      textInputAction: textInputAction,
+      onSubmitted: onSubmitted,
+      onChanged: onChanged,
       style: const TextStyle(color: Colors.black87),
       decoration: InputDecoration(
         hintText: hintText,
         prefixIcon: Icon(icon),
+        suffixIcon: suffixIcon,
         filled: true,
         fillColor: Colors.white,
         border: OutlineInputBorder(
@@ -1960,6 +2072,8 @@ class SpotSearchPanel extends StatefulWidget {
 class _SpotSearchPanelState extends State<SpotSearchPanel> {
   final searchController = TextEditingController();
   String category = '';
+  bool isSearching = false;
+  String? statusText;
 
   @override
   void dispose() {
@@ -1967,56 +2081,116 @@ class _SpotSearchPanelState extends State<SpotSearchPanel> {
     super.dispose();
   }
 
+  Future<void> runSearch() async {
+    setState(() {
+      isSearching = true;
+      statusText = null;
+    });
+    await widget.onSearch(q: searchController.text.trim(), category: category);
+    if (!mounted) return;
+    setState(() {
+      isSearching = false;
+      final term = searchController.text.trim();
+      statusText = term.isEmpty && category.isEmpty
+          ? 'Showing all tourist spots'
+          : 'Search updated';
+    });
+  }
+
+  Future<void> clearSearch() async {
+    searchController.clear();
+    setState(() {
+      category = '';
+      statusText = 'Showing all tourist spots';
+    });
+    await widget.onSearch(q: '', category: '');
+  }
+
   @override
   Widget build(BuildContext context) {
     return GlassBox(
+      borderRadius: 20,
       child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SizedBox(
-              width: 320,
-              child: AuthTextField(
-                controller: searchController,
-                hintText: 'Search location or tourist spot',
-                icon: Icons.search,
-              ),
+            AuthTextField(
+              controller: searchController,
+              hintText: 'Search tourist spot or location',
+              icon: Icons.search,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => runSearch(),
+              suffixIcon: searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: isSearching ? null : clearSearch,
+                      icon: const Icon(Icons.close),
+                    ),
+              onChanged: (_) => setState(() {}),
             ),
-            SizedBox(
-              width: 180,
-              child: DropdownButtonFormField<String>(
-                initialValue: category,
-                dropdownColor: const Color(0xff102033),
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Colors.white.withValues(alpha: .12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 420;
+                final categoryField = DropdownButtonFormField<String>(
+                  initialValue: category,
+                  dropdownColor: const Color(0xff102033),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: .12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
-                ),
-                items: const [
-                  DropdownMenuItem(value: '', child: Text('All')),
-                  DropdownMenuItem(value: 'Beach', child: Text('Beach')),
-                  DropdownMenuItem(value: 'Mountain', child: Text('Mountain')),
-                  DropdownMenuItem(value: 'Nature', child: Text('Nature')),
-                  DropdownMenuItem(value: 'Heritage', child: Text('Heritage')),
-                ],
-                onChanged: (value) => setState(() => category = value ?? ''),
-              ),
+                  items: const [
+                    DropdownMenuItem(value: '', child: Text('All categories')),
+                    DropdownMenuItem(value: 'Beach', child: Text('Beach')),
+                    DropdownMenuItem(
+                      value: 'Mountain',
+                      child: Text('Mountain'),
+                    ),
+                    DropdownMenuItem(value: 'Nature', child: Text('Nature')),
+                    DropdownMenuItem(
+                      value: 'Heritage',
+                      child: Text('Heritage'),
+                    ),
+                  ],
+                  onChanged: isSearching
+                      ? null
+                      : (value) => setState(() => category = value ?? ''),
+                );
+                final searchButton = GradientButton(
+                  label: isSearching ? 'Searching...' : 'Search',
+                  icon: Icons.tune,
+                  onPressed: isSearching ? null : runSearch,
+                );
+                if (compact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      categoryField,
+                      const SizedBox(height: 12),
+                      searchButton,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: categoryField),
+                    const SizedBox(width: 12),
+                    searchButton,
+                  ],
+                );
+              },
             ),
-            GradientButton(
-              label: 'Search',
-              icon: Icons.tune,
-              onPressed: () => widget.onSearch(
-                q: searchController.text.trim(),
-                category: category,
-              ),
-            ),
+            if (statusText != null) ...[
+              const SizedBox(height: 10),
+              Text(statusText!, style: GlassTextStyles.bodyMuted),
+            ],
           ],
         ),
       ),
@@ -2260,29 +2434,38 @@ class PopularSpotsPanel extends StatelessWidget {
               style: GlassTextStyles.cardTitle,
             ),
             const SizedBox(height: 16),
-            Wrap(
-              spacing: 14,
-              runSpacing: 14,
-              children: [
-                for (final spot in visibleSpots)
-                  SizedBox(
-                    width: 280,
-                    child: DestinationTile(
-                      icon: spot.category == 'Beach'
-                          ? '🏝️'
-                          : spot.category == 'Mountain'
-                          ? '🌋'
-                          : spot.category == 'Heritage'
-                          ? '🏛️'
-                          : '🏞️',
-                      title: spot.name,
-                      subtitle:
-                          '${spot.location} • ${spot.rating.toStringAsFixed(1)}',
-                      accent: const Color(0xff5eead4),
+            if (visibleSpots.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Text(
+                  'No tourist spots found. Try another location or category.',
+                  style: GlassTextStyles.bodyMuted,
+                ),
+              )
+            else
+              Wrap(
+                spacing: 14,
+                runSpacing: 14,
+                children: [
+                  for (final spot in visibleSpots)
+                    SizedBox(
+                      width: 280,
+                      child: DestinationTile(
+                        icon: spot.category == 'Beach'
+                            ? '🏝️'
+                            : spot.category == 'Mountain'
+                            ? '🌋'
+                            : spot.category == 'Heritage'
+                            ? '🏛️'
+                            : '🏞️',
+                        title: spot.name,
+                        subtitle:
+                            '${spot.location} • ${spot.rating.toStringAsFixed(1)}',
+                        accent: const Color(0xff5eead4),
+                      ),
                     ),
-                  ),
-              ],
-            ),
+                ],
+              ),
           ],
         ),
       ),
@@ -2498,6 +2681,8 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   List<SpotReview> reviews = [];
   List<SpotPhoto> photos = [];
   String? message;
+  bool isLoadingSpot = false;
+  bool isUploadingPhoto = false;
 
   @override
   void dispose() {
@@ -2512,6 +2697,7 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
     setState(() {
       selectedSpot = spot;
       message = null;
+      isLoadingSpot = true;
     });
     try {
       final nextReviews = await widget.api.fetchReviews(spot.id);
@@ -2524,8 +2710,15 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
         visited = status['visited'] ?? false;
         favorite = status['favorite'] ?? false;
         wantToVisit = status['want_to_visit'] ?? false;
+        isLoadingSpot = false;
       });
-    } catch (_) {}
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        isLoadingSpot = false;
+        message = 'Could not load latest reviews and photos.';
+      });
+    }
   }
 
   Future<void> saveStatus() async {
@@ -2554,11 +2747,16 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   Future<void> submitReport() async {
     final spot = selectedSpot;
     if (spot == null) return;
+    final details = reportController.text.trim();
+    if (details.isEmpty) {
+      setState(() => message = 'Write report details first.');
+      return;
+    }
     try {
       await widget.api.reportSpot(
         spotId: spot.id,
         reason: 'User report',
-        details: reportController.text.trim(),
+        details: details,
       );
       setState(() {
         reportController.clear();
@@ -2572,12 +2770,13 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   Future<void> addReview() async {
     final spot = selectedSpot;
     if (spot == null) return;
+    final comment = reviewController.text.trim();
+    if (comment.isEmpty) {
+      setState(() => message = 'Write a short review first.');
+      return;
+    }
     try {
-      final review = await widget.api.createReview(
-        spot.id,
-        rating,
-        reviewController.text.trim(),
-      );
+      final review = await widget.api.createReview(spot.id, rating, comment);
       setState(() {
         reviews = [review, ...reviews];
         reviewController.clear();
@@ -2591,10 +2790,16 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   Future<void> addPhoto() async {
     final spot = selectedSpot;
     if (spot == null) return;
+    final imageUrl = photoUrlController.text.trim();
+    if (imageUrl.isEmpty) {
+      setState(() => message = 'Paste a photo URL or pick from your device.');
+      return;
+    }
     try {
+      setState(() => isUploadingPhoto = true);
       final photo = await widget.api.createPhoto(
         spot.id,
-        photoUrlController.text.trim(),
+        imageUrl,
         captionController.text.trim(),
       );
       setState(() {
@@ -2605,6 +2810,8 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
       });
     } catch (error) {
       setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => isUploadingPhoto = false);
     }
   }
 
@@ -2612,12 +2819,16 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
     final spot = selectedSpot;
     if (spot == null) return;
     try {
+      setState(() => isUploadingPhoto = true);
       final picked = await ImagePicker().pickImage(
         source: ImageSource.gallery,
-        imageQuality: 78,
-        maxWidth: 1400,
+        imageQuality: 62,
+        maxWidth: 900,
       );
-      if (picked == null) return;
+      if (picked == null) {
+        if (mounted) setState(() => isUploadingPhoto = false);
+        return;
+      }
       final bytes = await picked.readAsBytes();
       final extension = picked.name.toLowerCase().endsWith('.png')
           ? 'png'
@@ -2635,6 +2846,8 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
       });
     } catch (error) {
       setState(() => message = error.toString());
+    } finally {
+      if (mounted) setState(() => isUploadingPhoto = false);
     }
   }
 
@@ -2658,18 +2871,39 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
               style: GlassTextStyles.cardTitle,
             ),
             const SizedBox(height: 14),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
+            DropdownButtonFormField<int>(
+              initialValue: spot.id,
+              dropdownColor: const Color(0xff102033),
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Choose tourist spot',
+                labelStyle: GlassTextStyles.bodyMuted,
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: .10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              items: [
                 for (final item in spots)
-                  ChoiceChip(
-                    label: Text(item.name),
-                    selected: item.id == spot.id,
-                    onSelected: (_) => selectSpot(item),
-                  ),
+                  DropdownMenuItem(value: item.id, child: Text(item.name)),
               ],
+              onChanged: (id) {
+                TouristSpot? next;
+                for (final item in spots) {
+                  if (item.id == id) {
+                    next = item;
+                    break;
+                  }
+                }
+                if (next != null) selectSpot(next);
+              },
             ),
+            if (isLoadingSpot) ...[
+              const SizedBox(height: 10),
+              const LinearProgressIndicator(minHeight: 3),
+            ],
             const SizedBox(height: 18),
             Text(
               '${spot.name} • ${spot.location}',
@@ -2720,6 +2954,8 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
               style: GlassTextStyles.bodyMuted,
             ),
             const SizedBox(height: 14),
+            const Text('My Travel List', style: GlassTextStyles.cardTitleSmall),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -2748,6 +2984,8 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
               ],
             ),
             const SizedBox(height: 16),
+            const Text('Rate This Spot', style: GlassTextStyles.cardTitleSmall),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -2780,6 +3018,8 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
               ],
             ),
             const SizedBox(height: 12),
+            const Text('Add Photo', style: GlassTextStyles.cardTitleSmall),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -2800,15 +3040,24 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
                     icon: Icons.closed_caption_outlined,
                   ),
                 ),
-                GradientButton(label: 'Upload Photo', onPressed: addPhoto),
                 GradientButton(
-                  label: 'Pick From Device',
+                  label: isUploadingPhoto ? 'Uploading...' : 'Upload URL',
+                  icon: Icons.cloud_upload_outlined,
+                  onPressed: isUploadingPhoto ? null : addPhoto,
+                ),
+                GradientButton(
+                  label: isUploadingPhoto ? 'Uploading...' : 'Pick Device',
                   icon: Icons.upload_file_outlined,
-                  onPressed: pickAndUploadPhoto,
+                  onPressed: isUploadingPhoto ? null : pickAndUploadPhoto,
                 ),
               ],
             ),
             const SizedBox(height: 12),
+            const Text(
+              'Report a Problem',
+              style: GlassTextStyles.cardTitleSmall,
+            ),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -2844,30 +3093,86 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
                     ),
                   ),
                 for (final photo in photos.take(4))
-                  SizedBox(
-                    width: 220,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(18),
-                      child: Image.network(
-                        photo.imageUrl,
-                        height: 140,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          height: 140,
-                          color: Colors.white.withValues(alpha: .12),
-                          alignment: Alignment.center,
-                          child: Text(
-                            photo.caption,
-                            style: GlassTextStyles.bodyMuted,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  SizedBox(width: 220, child: SpotPhotoPreview(photo: photo)),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class SpotPhotoPreview extends StatelessWidget {
+  const SpotPhotoPreview({required this.photo, super.key});
+
+  final SpotPhoto photo;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget image;
+    if (photo.imageUrl.startsWith('data:image/')) {
+      final commaIndex = photo.imageUrl.indexOf(',');
+      final payload = commaIndex >= 0
+          ? photo.imageUrl.substring(commaIndex + 1)
+          : '';
+      try {
+        image = Image.memory(
+          base64Decode(payload),
+          height: 140,
+          width: double.infinity,
+          fit: BoxFit.cover,
+        );
+      } catch (_) {
+        image = _PhotoFallback(caption: photo.caption);
+      }
+    } else {
+      image = Image.network(
+        photo.imageUrl,
+        height: 140,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) =>
+            _PhotoFallback(caption: photo.caption),
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Stack(
+        alignment: Alignment.bottomLeft,
+        children: [
+          image,
+          if (photo.caption.isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              color: Colors.black.withValues(alpha: .48),
+              child: Text(photo.caption, style: GlassTextStyles.body),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PhotoFallback extends StatelessWidget {
+  const _PhotoFallback({required this.caption});
+
+  final String caption;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 140,
+      width: double.infinity,
+      color: Colors.white.withValues(alpha: .12),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(12),
+      child: Text(
+        caption.isEmpty ? 'Photo preview unavailable' : caption,
+        style: GlassTextStyles.bodyMuted,
+        textAlign: TextAlign.center,
       ),
     );
   }
@@ -3540,7 +3845,7 @@ class _CommunityPostCardState extends State<CommunityPostCard> {
             Text(widget.post.title, style: GlassTextStyles.cardTitle),
             const SizedBox(height: 8),
             Text(
-              'by ${widget.post.authorName}',
+              'by ${widget.post.authorName} • ${formatDateTime(widget.post.createdAt)}',
               style: GlassTextStyles.bodyMuted,
             ),
             const SizedBox(height: 8),
@@ -3598,7 +3903,10 @@ class _CommunityPostCardState extends State<CommunityPostCard> {
             if (commentsLoaded) ...[
               const SizedBox(height: 14),
               for (final comment in comments.take(5)) ...[
-                Text(comment.authorName, style: GlassTextStyles.cardTitleSmall),
+                Text(
+                  '${comment.authorName} • ${formatDateTime(comment.createdAt)}',
+                  style: GlassTextStyles.cardTitleSmall,
+                ),
                 Text(comment.body, style: GlassTextStyles.bodyMuted),
                 const SizedBox(height: 10),
               ],
@@ -4306,15 +4614,19 @@ class GradientButton extends StatelessWidget {
   });
 
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
+    final alpha = onPressed == null ? .55 : 1.0;
     return DecoratedBox(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xff00c6ff), Color(0xff0072ff)],
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xff00c6ff).withValues(alpha: alpha),
+            const Color(0xff0072ff).withValues(alpha: alpha),
+          ],
         ),
         borderRadius: BorderRadius.circular(14),
       ),
@@ -4349,6 +4661,7 @@ class TravelPost {
     this.spotName = '',
     this.likeCount = 0,
     this.commentCount = 0,
+    this.createdAt,
   });
 
   final int id;
@@ -4358,6 +4671,7 @@ class TravelPost {
   final String spotName;
   final int likeCount;
   final int commentCount;
+  final DateTime? createdAt;
 
   factory TravelPost.fromJson(Map<String, dynamic> json) {
     return TravelPost(
@@ -4368,6 +4682,7 @@ class TravelPost {
       spotName: json['spot_name'] as String? ?? '',
       likeCount: json['like_count'] as int? ?? 0,
       commentCount: json['comment_count'] as int? ?? 0,
+      createdAt: parseDateTime(json['created_at']),
     );
   }
 }
