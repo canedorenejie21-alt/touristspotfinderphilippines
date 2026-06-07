@@ -24,7 +24,11 @@ class ApiConfig {
     'API_BASE_URL',
     defaultValue: 'http://127.0.0.1:8001',
   );
-  static const googleClientId = String.fromEnvironment('GOOGLE_CLIENT_ID');
+  static const googleClientId = String.fromEnvironment(
+    'GOOGLE_CLIENT_ID',
+    defaultValue:
+        '285680876693-8a59pf59fbefi2stf5356lbht781ob34.apps.googleusercontent.com',
+  );
 }
 
 String mediaUrl(String url) {
