@@ -3367,13 +3367,11 @@ class PhotoUploadWorkspace extends StatelessWidget {
                 ],
               ],
             ),
-            if (selectedPhotos.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              Padding(
-                padding: const EdgeInsets.only(left: 396),
-                child: actions,
-              ),
-            ],
+            const SizedBox(height: 18),
+            Padding(
+              padding: EdgeInsets.only(left: selectedPhotos.isEmpty ? 0 : 396),
+              child: actions,
+            ),
           ],
         );
       },
