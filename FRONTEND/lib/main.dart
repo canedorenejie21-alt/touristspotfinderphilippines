@@ -27,6 +27,13 @@ class ApiConfig {
   static const googleClientId = String.fromEnvironment('GOOGLE_CLIENT_ID');
 }
 
+String mediaUrl(String url) {
+  if (url.startsWith('/')) {
+    return '${ApiConfig.baseUrl}$url';
+  }
+  return url;
+}
+
 class AppUser {
   const AppUser({
     required this.id,
@@ -518,6 +525,36 @@ class ApiClient {
       headers: _headers,
       body: jsonEncode({'image_url': imageUrl, 'caption': caption}),
     );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(_readError(response), response.statusCode);
+    }
+    return SpotPhoto.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<SpotPhoto> uploadPhotoFile(
+    int spotId,
+    XFile file,
+    String caption,
+  ) async {
+    final request = http.MultipartRequest(
+      'POST',
+      _uri('/spots/$spotId/photo-files'),
+    );
+    request.headers.addAll({
+      if (token != null) 'Authorization': 'Bearer $token',
+    });
+    request.fields['caption'] = caption;
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        await file.readAsBytes(),
+        filename: file.name,
+      ),
+    );
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException(_readError(response), response.statusCode);
     }
@@ -2681,7 +2718,6 @@ class SpotDetailPanel extends StatefulWidget {
 class _SpotDetailPanelState extends State<SpotDetailPanel> {
   TouristSpot? selectedSpot;
   final reviewController = TextEditingController();
-  final photoUrlController = TextEditingController();
   final captionController = TextEditingController();
   final reportController = TextEditingController();
   int rating = 5;
@@ -2690,7 +2726,7 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   bool wantToVisit = false;
   List<SpotReview> reviews = [];
   List<SpotPhoto> photos = [];
-  List<String> selectedPhotoDataUrls = [];
+  List<SelectedPhoto> selectedPhotos = [];
   String? message;
   bool isLoadingSpot = false;
   bool isUploadingPhoto = false;
@@ -2698,7 +2734,6 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   @override
   void dispose() {
     reviewController.dispose();
-    photoUrlController.dispose();
     captionController.dispose();
     reportController.dispose();
     super.dispose();
@@ -2798,42 +2833,6 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
     }
   }
 
-  Future<void> addPhoto() async {
-    final spot = selectedSpot;
-    if (spot == null) return;
-    final imageUrl = photoUrlController.text.trim();
-    if (imageUrl.isEmpty) {
-      setState(() => message = 'Paste a photo URL or pick from your device.');
-      return;
-    }
-    try {
-      setState(() => isUploadingPhoto = true);
-      final photo = await widget.api.createPhoto(
-        spot.id,
-        imageUrl,
-        captionController.text.trim(),
-      );
-      await widget.api.createPost(
-        captionController.text.trim().isEmpty
-            ? 'Shared a photo from ${spot.name}.'
-            : captionController.text.trim(),
-        title: '${spot.name} photo',
-        spotName: spot.name,
-        photoUrls: [imageUrl],
-      );
-      setState(() {
-        photos = [photo, ...photos];
-        photoUrlController.clear();
-        captionController.clear();
-        message = 'Photo uploaded.';
-      });
-    } catch (error) {
-      setState(() => message = error.toString());
-    } finally {
-      if (mounted) setState(() => isUploadingPhoto = false);
-    }
-  }
-
   Future<void> pickPhotos() async {
     final spot = selectedSpot;
     if (spot == null) return;
@@ -2845,16 +2844,22 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
       if (picked.isEmpty) {
         return;
       }
-      final next = <String>[];
+      final next = <SelectedPhoto>[];
       for (final image in picked.take(20)) {
         final bytes = await image.readAsBytes();
         final extension = image.name.toLowerCase().endsWith('.png')
             ? 'png'
             : 'jpeg';
-        next.add('data:image/$extension;base64,${base64Encode(bytes)}');
+        next.add(
+          SelectedPhoto(
+            file: image,
+            previewDataUrl:
+                'data:image/$extension;base64,${base64Encode(bytes)}',
+          ),
+        );
       }
       setState(() {
-        selectedPhotoDataUrls = next;
+        selectedPhotos = next;
         message =
             '${next.length} photo${next.length == 1 ? '' : 's'} ready to upload.';
       });
@@ -2866,7 +2871,7 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   Future<void> uploadSelectedPhotos() async {
     final spot = selectedSpot;
     if (spot == null) return;
-    if (selectedPhotoDataUrls.isEmpty) {
+    if (selectedPhotos.isEmpty) {
       setState(() => message = 'Choose photos first.');
       return;
     }
@@ -2874,8 +2879,10 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
     final caption = captionController.text.trim();
     try {
       final uploaded = <SpotPhoto>[];
-      for (final url in selectedPhotoDataUrls) {
-        uploaded.add(await widget.api.createPhoto(spot.id, url, caption));
+      for (final photo in selectedPhotos) {
+        uploaded.add(
+          await widget.api.uploadPhotoFile(spot.id, photo.file, caption),
+        );
       }
       await widget.api.createPost(
         caption.isEmpty
@@ -2883,11 +2890,11 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
             : caption,
         title: '${spot.name} travel photos',
         spotName: spot.name,
-        photoUrls: selectedPhotoDataUrls,
+        photoUrls: uploaded.map((photo) => photo.imageUrl).toList(),
       );
       setState(() {
         photos = [...uploaded.reversed, ...photos];
-        selectedPhotoDataUrls = [];
+        selectedPhotos = [];
         captionController.clear();
         message = 'Photos uploaded and shared to Community.';
       });
@@ -2900,9 +2907,9 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
 
   void removeSelectedPhoto(int index) {
     setState(() {
-      selectedPhotoDataUrls = [
-        ...selectedPhotoDataUrls.take(index),
-        ...selectedPhotoDataUrls.skip(index + 1),
+      selectedPhotos = [
+        ...selectedPhotos.take(index),
+        ...selectedPhotos.skip(index + 1),
       ];
     });
   }
@@ -3077,49 +3084,17 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
             const Text('Add Photos', style: GlassTextStyles.cardTitleSmall),
             const SizedBox(height: 4),
             Text(
-              'Select photos, preview them, then upload. Uploaded photos are also shared to Community.',
+              'You can select multiple photos (up to 20)',
               style: GlassTextStyles.bodyMuted,
             ),
             const SizedBox(height: 12),
             PhotoUploadWorkspace(
-              selectedPhotoDataUrls: selectedPhotoDataUrls,
+              selectedPhotos: selectedPhotos,
+              captionController: captionController,
               isUploading: isUploadingPhoto,
               onPickPhotos: pickPhotos,
               onRemovePhoto: removeSelectedPhoto,
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: 300,
-                  child: AuthTextField(
-                    controller: photoUrlController,
-                    hintText: 'Optional photo URL',
-                    icon: Icons.photo_outlined,
-                  ),
-                ),
-                SizedBox(
-                  width: 360,
-                  child: AuthTextField(
-                    controller: captionController,
-                    hintText: 'Write a caption for Community',
-                    icon: Icons.closed_caption_outlined,
-                  ),
-                ),
-                GradientButton(
-                  label: isUploadingPhoto ? 'Uploading...' : 'Upload Photos',
-                  icon: Icons.cloud_upload_outlined,
-                  onPressed: isUploadingPhoto ? null : uploadSelectedPhotos,
-                ),
-                GradientButton(
-                  label: isUploadingPhoto ? 'Uploading...' : 'Upload URL',
-                  icon: Icons.add_photo_alternate_outlined,
-                  onPressed: isUploadingPhoto ? null : addPhoto,
-                ),
-              ],
+              onUpload: uploadSelectedPhotos,
             ),
             const SizedBox(height: 12),
             const Text(
@@ -3197,7 +3172,7 @@ class SpotPhotoPreview extends StatelessWidget {
       }
     } else {
       image = Image.network(
-        photo.imageUrl,
+        mediaUrl(photo.imageUrl),
         height: 140,
         width: double.infinity,
         fit: BoxFit.cover,
@@ -3225,23 +3200,34 @@ class SpotPhotoPreview extends StatelessWidget {
   }
 }
 
+class SelectedPhoto {
+  const SelectedPhoto({required this.file, required this.previewDataUrl});
+
+  final XFile file;
+  final String previewDataUrl;
+}
+
 class PhotoUploadWorkspace extends StatelessWidget {
   const PhotoUploadWorkspace({
-    required this.selectedPhotoDataUrls,
+    required this.selectedPhotos,
+    required this.captionController,
     required this.isUploading,
     required this.onPickPhotos,
     required this.onRemovePhoto,
+    required this.onUpload,
     super.key,
   });
 
-  final List<String> selectedPhotoDataUrls;
+  final List<SelectedPhoto> selectedPhotos;
+  final TextEditingController captionController;
   final bool isUploading;
   final VoidCallback onPickPhotos;
   final void Function(int index) onRemovePhoto;
+  final VoidCallback onUpload;
 
   @override
   Widget build(BuildContext context) {
-    final previewCount = selectedPhotoDataUrls.length.clamp(0, 4);
+    final previewCount = selectedPhotos.length.clamp(0, 4);
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 720;
@@ -3269,9 +3255,9 @@ class PhotoUploadWorkspace extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  selectedPhotoDataUrls.isEmpty
+                  selectedPhotos.isEmpty
                       ? 'Choose Photos'
-                      : '${selectedPhotoDataUrls.length} selected',
+                      : '${selectedPhotos.length} selected',
                   style: const TextStyle(
                     color: Color(0xff60a5fa),
                     fontSize: 18,
@@ -3281,7 +3267,7 @@ class PhotoUploadWorkspace extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'JPG, PNG, WEBP up to 20 photos',
+                  'JPG, PNG, WEBP up to 10MB each',
                   style: GlassTextStyles.bodyMuted,
                 ),
               ],
@@ -3295,10 +3281,10 @@ class PhotoUploadWorkspace extends StatelessWidget {
           children: [
             for (var index = 0; index < previewCount; index++)
               SelectedPhotoTile(
-                dataUrl: selectedPhotoDataUrls[index],
+                dataUrl: selectedPhotos[index].previewDataUrl,
                 onRemove: () => onRemovePhoto(index),
               ),
-            if (selectedPhotoDataUrls.length > 4)
+            if (selectedPhotos.length > 4)
               Container(
                 width: compact ? double.infinity : 220,
                 height: 126,
@@ -3311,7 +3297,7 @@ class PhotoUploadWorkspace extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  '+${selectedPhotoDataUrls.length - 4}\nmore',
+                  '+${selectedPhotos.length - 4}\nmore',
                   textAlign: TextAlign.center,
                   style: GlassTextStyles.cardTitle,
                 ),
@@ -3319,25 +3305,69 @@ class PhotoUploadWorkspace extends StatelessWidget {
           ],
         );
 
+        final captionField = AuthTextField(
+          controller: captionController,
+          hintText: 'Write a caption (optional)',
+          icon: Icons.closed_caption_outlined,
+        );
+        final uploadButton = SizedBox(
+          width: compact ? double.infinity : 230,
+          child: GradientButton(
+            label: isUploading ? 'Uploading...' : 'Upload Photos',
+            icon: Icons.cloud_upload_outlined,
+            onPressed: isUploading ? null : onUpload,
+          ),
+        );
+        final actions = compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  captionField,
+                  const SizedBox(height: 12),
+                  uploadButton,
+                ],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: captionField),
+                  const SizedBox(width: 18),
+                  uploadButton,
+                ],
+              );
+
         if (compact) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               picker,
-              if (selectedPhotoDataUrls.isNotEmpty) ...[
+              if (selectedPhotos.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 previews,
               ],
+              const SizedBox(height: 14),
+              actions,
             ],
           );
         }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        return Column(
           children: [
-            picker,
-            if (selectedPhotoDataUrls.isNotEmpty) ...[
-              const SizedBox(width: 18),
-              Expanded(child: previews),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                picker,
+                if (selectedPhotos.isNotEmpty) ...[
+                  const SizedBox(width: 36),
+                  Expanded(child: previews),
+                ],
+              ],
+            ),
+            if (selectedPhotos.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              Padding(
+                padding: const EdgeInsets.only(left: 396),
+                child: actions,
+              ),
             ],
           ],
         );
@@ -4240,7 +4270,7 @@ class DataOrNetworkImage extends StatelessWidget {
       }
     }
     return Image.network(
-      url,
+      mediaUrl(url),
       fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,

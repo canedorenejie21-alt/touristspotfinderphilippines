@@ -1,12 +1,15 @@
 from datetime import datetime
 import json
+from pathlib import Path
 from secrets import token_urlsafe
+from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import Session
 
@@ -69,8 +72,17 @@ from .verification import (
 settings = get_settings()
 EMAIL_DELIVERY_ERROR = "Email sending failed. Check SMTP variables in the backend host."
 GOOGLE_AUTH_ERROR = "Google Sign-In failed. Check Google Client ID setup."
+UPLOAD_DIR = Path("uploads")
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 app = FastAPI(title="Tourist Spot Finder PH API", version="1.0.0")
+UPLOAD_DIR.mkdir(exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.frontend_origins,
@@ -484,6 +496,51 @@ def create_photo(
         spot_id=spot_id,
         image_url=payload.image_url.strip(),
         caption=payload.caption.strip(),
+    )
+    db.add(photo)
+    db.commit()
+    db.refresh(photo)
+    return PhotoOut(
+        id=photo.id,
+        spot_id=photo.spot_id,
+        image_url=photo.image_url,
+        caption=photo.caption,
+        author_name=current_user.full_name,
+        created_at=photo.created_at,
+    )
+
+
+@app.post("/spots/{spot_id}/photo-files", response_model=PhotoOut, status_code=status.HTTP_201_CREATED)
+async def upload_photo_file(
+    spot_id: int,
+    caption: str = Form(default=""),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PhotoOut:
+    if not db.get(TouristSpot, spot_id):
+        raise HTTPException(status_code=404, detail="Spot not found")
+    original_extension = Path(file.filename or "").suffix.lower()
+    extension = ALLOWED_IMAGE_TYPES.get(file.content_type or "")
+    if extension is None and original_extension in ALLOWED_IMAGE_EXTENSIONS:
+        extension = ".jpg" if original_extension == ".jpeg" else original_extension
+    if extension is None:
+        raise HTTPException(status_code=400, detail="Upload JPG, PNG, or WEBP photos only")
+
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Each photo must be 10MB or smaller")
+
+    filename = f"{uuid4().hex}{extension}"
+    path = UPLOAD_DIR / filename
+    path.write_bytes(contents)
+    image_url = f"/uploads/{filename}"
+
+    photo = SpotPhoto(
+        user_id=current_user.id,
+        spot_id=spot_id,
+        image_url=image_url,
+        caption=caption.strip(),
     )
     db.add(photo)
     db.commit()
