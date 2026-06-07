@@ -75,6 +75,7 @@ class TravelPost(Base):
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     spot_name: Mapped[str] = mapped_column(String(160), default="")
+    photo_urls: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     author: Mapped[User] = relationship(back_populates="posts")

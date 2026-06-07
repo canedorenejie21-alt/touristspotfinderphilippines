@@ -131,6 +131,7 @@ class PostCreate(BaseModel):
     body: str = Field(min_length=1, max_length=1000)
     title: str | None = Field(default=None, max_length=160)
     spot_name: str | None = Field(default=None, max_length=160)
+    photo_urls: list[str] = Field(default_factory=list, max_length=20)
 
 
 class PostOut(BaseModel):
@@ -140,6 +141,7 @@ class PostOut(BaseModel):
     spot_name: str
     author_name: str
     created_at: datetime
+    photo_urls: list[str] = Field(default_factory=list)
     like_count: int = 0
     comment_count: int = 0
 

@@ -85,6 +85,7 @@ def startup() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_user_columns()
     ensure_tourist_spot_columns()
+    ensure_travel_post_columns()
     db = next(get_db())
     try:
         seed_spots(db)
@@ -135,6 +136,16 @@ def ensure_tourist_spot_columns() -> None:
         for name, ddl in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE tourist_spots ADD COLUMN {name} {ddl}"))
+
+
+def ensure_travel_post_columns() -> None:
+    inspector = inspect(engine)
+    if "travel_posts" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("travel_posts")}
+    with engine.begin() as connection:
+        if "photo_urls" not in columns:
+            connection.execute(text("ALTER TABLE travel_posts ADD COLUMN photo_urls TEXT NOT NULL DEFAULT '[]'"))
 
 
 @app.get("/health")
@@ -506,6 +517,10 @@ def trending_spots(db: Session = Depends(get_db)) -> list[TouristSpot]:
 def post_to_out(row: TravelPost, db: Session) -> PostOut:
     like_count = db.query(PostLike).filter(PostLike.post_id == row.id).count()
     comment_count = db.query(PostComment).filter(PostComment.post_id == row.id).count()
+    try:
+        photo_urls = json.loads(row.photo_urls or "[]")
+    except json.JSONDecodeError:
+        photo_urls = []
     return PostOut(
         id=row.id,
         title=row.title,
@@ -513,6 +528,7 @@ def post_to_out(row: TravelPost, db: Session) -> PostOut:
         spot_name=row.spot_name,
         author_name=row.author.full_name,
         created_at=row.created_at,
+        photo_urls=photo_urls if isinstance(photo_urls, list) else [],
         like_count=like_count,
         comment_count=comment_count,
     )
@@ -537,6 +553,7 @@ def create_post(
         title=title,
         body=payload.body.strip(),
         spot_name=spot_name,
+        photo_urls=json.dumps(payload.photo_urls[:20]),
     )
     db.add(post)
     db.commit()

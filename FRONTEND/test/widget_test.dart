@@ -70,8 +70,19 @@ class FakeApiClient extends ApiClient {
   Future<List<TravelPost>> fetchPosts() async => fallbackPosts;
 
   @override
-  Future<TravelPost> createPost(String body) async {
-    return TravelPost('Traveler Update', body, authorName: 'Test Traveler');
+  Future<TravelPost> createPost(
+    String body, {
+    String title = 'Traveler Update',
+    String spotName = '',
+    List<String> photoUrls = const [],
+  }) async {
+    return TravelPost(
+      title,
+      body,
+      authorName: 'Test Traveler',
+      spotName: spotName,
+      photoUrls: photoUrls,
+    );
   }
 
   @override

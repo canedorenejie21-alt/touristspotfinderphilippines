@@ -356,11 +356,21 @@ class ApiClient {
         .toList();
   }
 
-  Future<TravelPost> createPost(String body) async {
+  Future<TravelPost> createPost(
+    String body, {
+    String title = 'Traveler Update',
+    String spotName = '',
+    List<String> photoUrls = const [],
+  }) async {
     final response = await _client.post(
       _uri('/posts'),
       headers: _headers,
-      body: jsonEncode({'body': body, 'title': 'Traveler Update'}),
+      body: jsonEncode({
+        'body': body,
+        'title': title,
+        'spot_name': spotName,
+        'photo_urls': photoUrls,
+      }),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException(_readError(response), response.statusCode);
@@ -2680,6 +2690,7 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
   bool wantToVisit = false;
   List<SpotReview> reviews = [];
   List<SpotPhoto> photos = [];
+  List<String> selectedPhotoDataUrls = [];
   String? message;
   bool isLoadingSpot = false;
   bool isUploadingPhoto = false;
@@ -2802,6 +2813,14 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
         imageUrl,
         captionController.text.trim(),
       );
+      await widget.api.createPost(
+        captionController.text.trim().isEmpty
+            ? 'Shared a photo from ${spot.name}.'
+            : captionController.text.trim(),
+        title: '${spot.name} photo',
+        spotName: spot.name,
+        photoUrls: [imageUrl],
+      );
       setState(() {
         photos = [photo, ...photos];
         photoUrlController.clear();
@@ -2815,40 +2834,77 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
     }
   }
 
-  Future<void> pickAndUploadPhoto() async {
+  Future<void> pickPhotos() async {
     final spot = selectedSpot;
     if (spot == null) return;
     try {
-      setState(() => isUploadingPhoto = true);
-      final picked = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 62,
-        maxWidth: 900,
+      final picked = await ImagePicker().pickMultiImage(
+        imageQuality: 58,
+        maxWidth: 760,
       );
-      if (picked == null) {
-        if (mounted) setState(() => isUploadingPhoto = false);
+      if (picked.isEmpty) {
         return;
       }
-      final bytes = await picked.readAsBytes();
-      final extension = picked.name.toLowerCase().endsWith('.png')
-          ? 'png'
-          : 'jpeg';
-      final dataUrl = 'data:image/$extension;base64,${base64Encode(bytes)}';
-      final photo = await widget.api.createPhoto(
-        spot.id,
-        dataUrl,
-        captionController.text.trim(),
+      final next = <String>[];
+      for (final image in picked.take(20)) {
+        final bytes = await image.readAsBytes();
+        final extension = image.name.toLowerCase().endsWith('.png')
+            ? 'png'
+            : 'jpeg';
+        next.add('data:image/$extension;base64,${base64Encode(bytes)}');
+      }
+      setState(() {
+        selectedPhotoDataUrls = next;
+        message =
+            '${next.length} photo${next.length == 1 ? '' : 's'} ready to upload.';
+      });
+    } catch (error) {
+      setState(() => message = error.toString());
+    }
+  }
+
+  Future<void> uploadSelectedPhotos() async {
+    final spot = selectedSpot;
+    if (spot == null) return;
+    if (selectedPhotoDataUrls.isEmpty) {
+      setState(() => message = 'Choose photos first.');
+      return;
+    }
+    setState(() => isUploadingPhoto = true);
+    final caption = captionController.text.trim();
+    try {
+      final uploaded = <SpotPhoto>[];
+      for (final url in selectedPhotoDataUrls) {
+        uploaded.add(await widget.api.createPhoto(spot.id, url, caption));
+      }
+      await widget.api.createPost(
+        caption.isEmpty
+            ? 'Shared ${uploaded.length} photo${uploaded.length == 1 ? '' : 's'} from ${spot.name}.'
+            : caption,
+        title: '${spot.name} travel photos',
+        spotName: spot.name,
+        photoUrls: selectedPhotoDataUrls,
       );
       setState(() {
-        photos = [photo, ...photos];
+        photos = [...uploaded.reversed, ...photos];
+        selectedPhotoDataUrls = [];
         captionController.clear();
-        message = 'Photo uploaded from device.';
+        message = 'Photos uploaded and shared to Community.';
       });
     } catch (error) {
       setState(() => message = error.toString());
     } finally {
       if (mounted) setState(() => isUploadingPhoto = false);
     }
+  }
+
+  void removeSelectedPhoto(int index) {
+    setState(() {
+      selectedPhotoDataUrls = [
+        ...selectedPhotoDataUrls.take(index),
+        ...selectedPhotoDataUrls.skip(index + 1),
+      ];
+    });
   }
 
   @override
@@ -3017,38 +3073,51 @@ class _SpotDetailPanelState extends State<SpotDetailPanel> {
                 GradientButton(label: 'Save Review', onPressed: addReview),
               ],
             ),
+            const SizedBox(height: 18),
+            const Text('Add Photos', style: GlassTextStyles.cardTitleSmall),
+            const SizedBox(height: 4),
+            Text(
+              'Select photos, preview them, then upload. Uploaded photos are also shared to Community.',
+              style: GlassTextStyles.bodyMuted,
+            ),
             const SizedBox(height: 12),
-            const Text('Add Photo', style: GlassTextStyles.cardTitleSmall),
-            const SizedBox(height: 8),
+            PhotoUploadWorkspace(
+              selectedPhotoDataUrls: selectedPhotoDataUrls,
+              isUploading: isUploadingPhoto,
+              onPickPhotos: pickPhotos,
+              onRemovePhoto: removeSelectedPhoto,
+            ),
+            const SizedBox(height: 12),
             Wrap(
               spacing: 12,
               runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 SizedBox(
                   width: 300,
                   child: AuthTextField(
                     controller: photoUrlController,
-                    hintText: 'Photo URL',
+                    hintText: 'Optional photo URL',
                     icon: Icons.photo_outlined,
                   ),
                 ),
                 SizedBox(
-                  width: 240,
+                  width: 360,
                   child: AuthTextField(
                     controller: captionController,
-                    hintText: 'Caption',
+                    hintText: 'Write a caption for Community',
                     icon: Icons.closed_caption_outlined,
                   ),
                 ),
                 GradientButton(
-                  label: isUploadingPhoto ? 'Uploading...' : 'Upload URL',
+                  label: isUploadingPhoto ? 'Uploading...' : 'Upload Photos',
                   icon: Icons.cloud_upload_outlined,
-                  onPressed: isUploadingPhoto ? null : addPhoto,
+                  onPressed: isUploadingPhoto ? null : uploadSelectedPhotos,
                 ),
                 GradientButton(
-                  label: isUploadingPhoto ? 'Uploading...' : 'Pick Device',
-                  icon: Icons.upload_file_outlined,
-                  onPressed: isUploadingPhoto ? null : pickAndUploadPhoto,
+                  label: isUploadingPhoto ? 'Uploading...' : 'Upload URL',
+                  icon: Icons.add_photo_alternate_outlined,
+                  onPressed: isUploadingPhoto ? null : addPhoto,
                 ),
               ],
             ),
@@ -3151,6 +3220,182 @@ class SpotPhotoPreview extends StatelessWidget {
               child: Text(photo.caption, style: GlassTextStyles.body),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class PhotoUploadWorkspace extends StatelessWidget {
+  const PhotoUploadWorkspace({
+    required this.selectedPhotoDataUrls,
+    required this.isUploading,
+    required this.onPickPhotos,
+    required this.onRemovePhoto,
+    super.key,
+  });
+
+  final List<String> selectedPhotoDataUrls;
+  final bool isUploading;
+  final VoidCallback onPickPhotos;
+  final void Function(int index) onRemovePhoto;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewCount = selectedPhotoDataUrls.length.clamp(0, 4);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 720;
+        final picker = InkWell(
+          onTap: isUploading ? null : onPickPhotos,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            width: compact ? double.infinity : 330,
+            height: 180,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: .45),
+                style: BorderStyle.solid,
+              ),
+              color: Colors.white.withValues(alpha: .08),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.add_photo_alternate_outlined,
+                  color: Color(0xff3b82f6),
+                  size: 44,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  selectedPhotoDataUrls.isEmpty
+                      ? 'Choose Photos'
+                      : '${selectedPhotoDataUrls.length} selected',
+                  style: const TextStyle(
+                    color: Color(0xff60a5fa),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'JPG, PNG, WEBP up to 20 photos',
+                  style: GlassTextStyles.bodyMuted,
+                ),
+              ],
+            ),
+          ),
+        );
+
+        final previews = Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (var index = 0; index < previewCount; index++)
+              SelectedPhotoTile(
+                dataUrl: selectedPhotoDataUrls[index],
+                onRemove: () => onRemovePhoto(index),
+              ),
+            if (selectedPhotoDataUrls.length > 4)
+              Container(
+                width: compact ? double.infinity : 220,
+                height: 126,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: .16),
+                  ),
+                ),
+                child: Text(
+                  '+${selectedPhotoDataUrls.length - 4}\nmore',
+                  textAlign: TextAlign.center,
+                  style: GlassTextStyles.cardTitle,
+                ),
+              ),
+          ],
+        );
+
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              picker,
+              if (selectedPhotoDataUrls.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                previews,
+              ],
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            picker,
+            if (selectedPhotoDataUrls.isNotEmpty) ...[
+              const SizedBox(width: 18),
+              Expanded(child: previews),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class SelectedPhotoTile extends StatelessWidget {
+  const SelectedPhotoTile({
+    required this.dataUrl,
+    required this.onRemove,
+    super.key,
+  });
+
+  final String dataUrl;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final commaIndex = dataUrl.indexOf(',');
+    final payload = commaIndex >= 0 ? dataUrl.substring(commaIndex + 1) : '';
+    Widget image;
+    try {
+      image = Image.memory(
+        base64Decode(payload),
+        width: double.infinity,
+        height: 126,
+        fit: BoxFit.cover,
+      );
+    } catch (_) {
+      image = const _PhotoFallback(caption: 'Preview unavailable');
+    }
+
+    return SizedBox(
+      width: 220,
+      height: 126,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            image,
+            Positioned(
+              right: 8,
+              top: 8,
+              child: IconButton.filled(
+                tooltip: 'Remove photo',
+                onPressed: onRemove,
+                icon: const Icon(Icons.close),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black.withValues(alpha: .55),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3850,6 +4095,10 @@ class _CommunityPostCardState extends State<CommunityPostCard> {
             ),
             const SizedBox(height: 8),
             Text(widget.post.body, style: GlassTextStyles.body),
+            if (widget.post.photoUrls.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              PostPhotoGrid(photoUrls: widget.post.photoUrls),
+            ],
             const SizedBox(height: 16),
             Wrap(
               spacing: 10,
@@ -3914,6 +4163,89 @@ class _CommunityPostCardState extends State<CommunityPostCard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class PostPhotoGrid extends StatelessWidget {
+  const PostPhotoGrid({required this.photoUrls, super.key});
+
+  final List<String> photoUrls;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = photoUrls.take(4).toList();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 520;
+        final tileWidth = compact
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 12) / 2;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (var index = 0; index < visible.length; index++)
+              SizedBox(
+                width: tileWidth,
+                height: compact ? 180 : 150,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: DataOrNetworkImage(url: visible[index]),
+                    ),
+                    if (index == 3 && photoUrls.length > 4)
+                      Container(
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: .55),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          '+${photoUrls.length - 4} more',
+                          style: GlassTextStyles.cardTitle,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class DataOrNetworkImage extends StatelessWidget {
+  const DataOrNetworkImage({required this.url, super.key});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.startsWith('data:image/')) {
+      final commaIndex = url.indexOf(',');
+      final payload = commaIndex >= 0 ? url.substring(commaIndex + 1) : '';
+      try {
+        return Image.memory(
+          base64Decode(payload),
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+        );
+      } catch (_) {
+        return const _PhotoFallback(caption: 'Photo preview unavailable');
+      }
+    }
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (context, error, stackTrace) =>
+          const _PhotoFallback(caption: 'Photo preview unavailable'),
     );
   }
 }
@@ -4446,6 +4778,10 @@ class GlassPostCard extends StatelessWidget {
             Text('by ${post.authorName}', style: GlassTextStyles.bodyMuted),
             const SizedBox(height: 8),
             Text(post.body, style: GlassTextStyles.body),
+            if (post.photoUrls.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              PostPhotoGrid(photoUrls: post.photoUrls),
+            ],
           ],
         ),
       ),
@@ -4661,6 +4997,7 @@ class TravelPost {
     this.spotName = '',
     this.likeCount = 0,
     this.commentCount = 0,
+    this.photoUrls = const [],
     this.createdAt,
   });
 
@@ -4671,6 +5008,7 @@ class TravelPost {
   final String spotName;
   final int likeCount;
   final int commentCount;
+  final List<String> photoUrls;
   final DateTime? createdAt;
 
   factory TravelPost.fromJson(Map<String, dynamic> json) {
@@ -4682,6 +5020,11 @@ class TravelPost {
       spotName: json['spot_name'] as String? ?? '',
       likeCount: json['like_count'] as int? ?? 0,
       commentCount: json['comment_count'] as int? ?? 0,
+      photoUrls:
+          (json['photo_urls'] as List<dynamic>?)
+              ?.whereType<String>()
+              .toList() ??
+          const [],
       createdAt: parseDateTime(json['created_at']),
     );
   }
