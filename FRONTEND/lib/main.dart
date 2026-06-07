@@ -1782,6 +1782,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                 ),
                                 const SizedBox(height: 14),
                                 if (kIsWeb &&
+                                    ApiConfig.googleClientId.isNotEmpty &&
                                     !GoogleSignIn.instance
                                         .supportsAuthenticate())
                                   Center(child: renderGoogleWebButton())
